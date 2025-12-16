@@ -264,7 +264,7 @@ export default function SpyGame() {
       name: item.name,
       query: item.query,
       // Путь к изображению (если у вас есть изображения)
-      image: `/images/${item.name}.png`
+      image: process.env.PUBLIC_URL + `/images/${item.name}.png`
       // Или если изображений нет, можно использовать placeholder
       // image: `https://via.placeholder.com/150?text=${item.name}`
     };
