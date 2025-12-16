@@ -4,12 +4,6 @@ import { database } from './firebase';
 import { ref, set, push, onValue, remove, update } from 'firebase/database';
 import itemList from './items/itemlist.json';
 
-// Тестовый предмет
-const testItem = {
-  name: "Brimstone",
-  description: "Кровавая лазерная атака"
-};
-
 export default function SpyGame() {
   const [screen, setScreen] = useState('home'); // 'home', 'room', 'game'
   const [joinName, setJoinName] = useState('');
