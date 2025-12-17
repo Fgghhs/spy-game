@@ -33,7 +33,8 @@ export default function SpyGame() {
   const [decisionPhase, setDecisionPhase] = useState(false);
   const [myDecision, setMyDecision] = useState(null);
 
-
+  const [showItemGuess, setShowItemGuess] = useState(false);
+  const [itemSearch, setItemSearch] = useState('');
 
   // Слушаем изменения в комнате
   useEffect(() => {
@@ -370,6 +371,39 @@ export default function SpyGame() {
     });
   };
 
+  const guessItem = async (selectedItem) => {
+    if (!gameData || !roomData) return;
+    
+    // Проверяем, правильно ли угадал шпион
+    const isCorrect = selectedItem.id === gameData.item.id;
+    
+    if (isCorrect) {
+      // Шпион угадал - он победил!
+      const spyId = Object.entries(gameData.roles).find(([id, role]) => role === 'spy')[0];
+      await update(ref(database, `rooms/${roomData.roomId}/game`), {
+        gameOver: true,
+        winner: 'spy',
+        spyGuessed: true,
+        guessedItem: selectedItem,
+        votedOutPlayer: null, // Никого не выгоняли
+        spyId: spyId
+      });
+    } else {
+      // Шпион ошибся - мирные победили!
+      const spyId = Object.entries(gameData.roles).find(([id, role]) => role === 'spy')[0];
+      await update(ref(database, `rooms/${roomData.roomId}/game`), {
+        gameOver: true,
+        winner: 'civilians',
+        spyGuessed: false,
+        guessedItem: selectedItem,
+        votedOutPlayer: spyId, // Шпион "выгнан" за неправильную догадку
+        spyId: spyId
+      });
+    }
+    
+    setShowItemGuess(false);
+  };
+
   const checkVotingResults = async () => {
     if (!gameData || !gameData.votes) return;
     
@@ -524,8 +558,11 @@ export default function SpyGame() {
     setVotingPhase(false);
   };
 
+  // Экран завершения игры
   if (screen === 'game' && gameOver && gameData) {
-    const votedOutPlayer = roomData.players.find(p => p.id === gameData.votedOutPlayer);
+    const votedOutPlayer = gameData.votedOutPlayer 
+      ? roomData.players.find(p => p.id === gameData.votedOutPlayer)
+      : null;
     const spyPlayer = roomData.players.find(p => p.id === gameData.spyId);
     const iWasSpy = myRole === 'spy';
     const iWon = (winner === 'civilians' && !iWasSpy) || (winner === 'spy' && iWasSpy);
@@ -544,10 +581,40 @@ export default function SpyGame() {
               </h2>
               
               <div className="space-y-4 text-lg">
-                <div className="bg-white/5 rounded-lg p-4">
-                  <p className="text-purple-200 mb-1">Выгнали:</p>
-                  <p className="text-white font-bold text-xl">{votedOutPlayer?.name}</p>
-                </div>
+                {/* Причина завершения */}
+                {gameData.spyGuessed !== undefined && (
+                  <div className={`rounded-lg p-4 border-2 ${
+                    gameData.spyGuessed 
+                      ? 'bg-red-500/20 border-red-500' 
+                      : 'bg-green-500/20 border-green-500'
+                  }`}>
+                    <p className="text-white font-bold mb-2">
+                      {gameData.spyGuessed 
+                        ? '🎯 Шпион правильно угадал предмет!' 
+                        : '❌ Шпион ошибся с предметом!'}
+                    </p>
+                    {gameData.guessedItem && (
+                      <div className="mt-3">
+                        <p className="text-purple-200 text-sm">Шпион выбрал:</p>
+                        {gameData.guessedItem.image && (
+                          <img 
+                            src={`/items/images/${gameData.guessedItem.query}.png`}
+                            alt={gameData.guessedItem.name}
+                            className="w-20 h-20 mx-auto my-2 object-contain bg-white/10 rounded-lg p-1"
+                          />
+                        )}
+                        <p className="text-white font-bold">{gameData.guessedItem.name}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {votedOutPlayer && (
+                  <div className="bg-white/5 rounded-lg p-4">
+                    <p className="text-purple-200 mb-1">Выгнали:</p>
+                    <p className="text-white font-bold text-xl">{votedOutPlayer.name}</p>
+                  </div>
+                )}
                 
                 <div className="bg-red-500/20 rounded-lg p-4 border border-red-500/30">
                   <p className="text-purple-200 mb-1">Шпионом был:</p>
@@ -555,7 +622,7 @@ export default function SpyGame() {
                 </div>
                 
                 <div className="bg-blue-500/20 rounded-lg p-6 border border-blue-500/30">
-                  <p className="text-purple-200 mb-3">Предметом был:</p>
+                  <p className="text-purple-200 mb-3">Правильный предмет:</p>
                   
                   {gameData.item.image && (
                     <div className="mb-4">
@@ -906,6 +973,100 @@ export default function SpyGame() {
               </div>
             )}
           </div>
+          {/* Модальное окно угадывания предмета (только для шпиона) */}
+          {myRole === 'spy' && showItemGuess && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-gradient-to-br from-slate-900 to-purple-900 rounded-2xl border border-white/20 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+                {/* Заголовок */}
+                <div className="bg-white/10 p-6 border-b border-white/20">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-2xl font-bold text-white">🔍 Угадайте предмет</h2>
+                    <button
+                      onClick={() => setShowItemGuess(false)}
+                      className="text-white/70 hover:text-white text-2xl w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition-all"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  
+                  {/* Поиск */}
+                  <div className="mt-4">
+                    <input
+                      type="text"
+                      value={itemSearch}
+                      onChange={(e) => setItemSearch(e.target.value)}
+                      placeholder="Поиск предмета..."
+                      className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-purple-300/50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      autoFocus
+                    />
+                  </div>
+                  
+                  <p className="text-red-400 text-sm mt-3 font-medium">
+                    ⚠️ Внимание! Если вы угадаете неправильно - мирные победят!
+                  </p>
+                </div>
+                
+                {/* Список предметов */}
+                <div className="overflow-y-auto p-6 max-h-[calc(90vh-200px)]">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {itemList
+                      .filter(item => 
+                        item.name.toLowerCase().includes(itemSearch.toLowerCase())
+                      )
+                      .map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            if (window.confirm(`Вы уверены, что это "${item.name}"? Если ошибетесь - проиграете!`)) {
+                              guessItem(item);
+                            }
+                          }}
+                          className="bg-white/10 hover:bg-white/20 border-2 border-white/20 hover:border-blue-500 rounded-xl p-3 transition-all transform hover:scale-105 group"
+                        >
+                          <div className="aspect-square bg-white/10 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
+                            <img 
+                              src={`/spy-game/images/${item.name}.png`}
+                              alt={item.name}
+                              className="w-full h-full object-contain"
+                              onError={(e) => {
+                                e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="50" font-size="40">❓</text></svg>';
+                              }}
+                            />
+                          </div>
+                          <p className="text-white text-sm font-medium text-center group-hover:text-blue-400 transition-colors">
+                            {item.name}
+                          </p>
+                        </button>
+                      ))}
+                  </div>
+                  
+                  {itemList.filter(item => 
+                    item.name.toLowerCase().includes(itemSearch.toLowerCase())
+                  ).length === 0 && (
+                    <p className="text-center text-purple-300 py-8">
+                      Предметы не найдены
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Кнопка "Угадать предмет" для шпиона */}
+          {myRole === 'spy' && !roleRevealed && (
+            <div className="bg-red-500/20 border-2 border-red-500 rounded-xl p-4 mb-6">
+              <p className="text-red-300 text-sm mb-3 text-center">
+                Как шпион, вы можете попытаться угадать предмет
+              </p>
+              <button
+                onClick={() => setShowItemGuess(true)}
+                className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-xl transition-all transform hover:scale-105 shadow-lg flex items-center justify-center gap-2"
+              >
+                🎯 Угадать предмет
+              </button>
+            </div>
+          )}
+
 
           {/* Текущий ход */}
           <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20 shadow-2xl mb-6">

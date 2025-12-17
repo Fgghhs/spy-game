@@ -164,9 +164,11 @@
   { "id": 162, "query": "void", "name": "Void" },
   { "id": 163, "query": "wait_what", "name": "Wait What" },
   { "id": 164, "query": "wavy_cap", "name": "Wavy Cap" },
-  { "id": 165, "query": "we_need_to_go", "name": "We Need to Go" },
+  { "id": 165, "query": "we_need_to_go_deeper", "name": "We Need to Go Deeper!" },
   { "id": 166, "query": "white_pony", "name": "White Pony" },
   { "id": 167, "query": "wooden_nickel", "name": "Wooden Nickel" },
   { "id": 168, "query": "yuck_heart", "name": "Yuck Heart" },
   { "id": 169, "query": "yum_heart", "name": "Yum Heart" }
+
+
 ]
