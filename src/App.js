@@ -4,6 +4,7 @@ import { database } from './firebase';
 import { ref, set, push, onValue, remove, update } from 'firebase/database';
 import itemList from './items/itemlist.json';
 
+
 export default function SpyGame() {
   const [screen, setScreen] = useState('home'); // 'home', 'room', 'game'
   const [joinName, setJoinName] = useState('');
@@ -16,6 +17,9 @@ export default function SpyGame() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [currentPlayerId, setCurrentPlayerId] = useState(null);
+
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState('');
   
   // Игровые данные
   const [gameData, setGameData] = useState(null);
@@ -28,6 +32,8 @@ export default function SpyGame() {
   const [winner, setWinner] = useState(null);
   const [decisionPhase, setDecisionPhase] = useState(false);
   const [myDecision, setMyDecision] = useState(null);
+
+
 
   // Слушаем изменения в комнате
   useEffect(() => {
@@ -112,6 +118,48 @@ export default function SpyGame() {
       }
     }
   }, [gameData]);
+
+  // Текстовый чат
+  useEffect(() => {
+    if (roomData && roomData.roomId && screen === 'game') {
+      const chatRef = ref(database, `rooms/${roomData.roomId}/chat`);
+      
+      const unsubscribe = onValue(chatRef, (snapshot) => {
+        const messages = snapshot.val();
+        if (messages) {
+          const messageList = Object.entries(messages).map(([id, msg]) => ({
+            id,
+            ...msg
+          })).sort((a, b) => a.timestamp - b.timestamp);
+          setChatMessages(messageList);
+        } else {
+          setChatMessages([]);
+        }
+      });
+
+      return () => unsubscribe();
+    }
+  }, [roomData?.roomId, screen]);
+
+  const sendMessage = async () => {
+    if (!chatInput.trim() || !roomData || !currentPlayerId) return;
+    
+    const currentPlayer = roomData.players.find(p => p.id === currentPlayerId);
+    
+    try {
+      const messageRef = push(ref(database, `rooms/${roomData.roomId}/chat`));
+      await set(messageRef, {
+        playerId: currentPlayerId,
+        playerName: currentPlayer?.name || 'Неизвестный',
+        message: chatInput.trim(),
+        timestamp: Date.now()
+      });
+      
+      setChatInput('');
+    } catch (err) {
+      console.error('Ошибка отправки сообщения:', err);
+    }
+  };
 
   const handleJoinRoom = async () => {
     if (!joinName || !joinRoomId) {
@@ -929,6 +977,65 @@ export default function SpyGame() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+        <div className="fixed bottom-4 right-4 w-80 bg-white/10 backdrop-blur-lg rounded-2xl border border-white/20 shadow-2xl overflow-hidden">
+          {/* Заголовок чата */}
+          <div className="bg-white/10 px-4 py-3 border-b border-white/20">
+            <h3 className="text-white font-bold flex items-center gap-2">
+              💬 Чат
+            </h3>
+          </div>
+          
+          {/* Сообщения */}
+          <div className="h-64 overflow-y-auto p-3 space-y-2 bg-black/20">
+            {chatMessages.length === 0 ? (
+              <p className="text-purple-300 text-sm text-center py-8">
+                Сообщений пока нет
+              </p>
+            ) : (
+              chatMessages.map((msg) => {
+                const isMyMessage = msg.playerId === currentPlayerId;
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex ${isMyMessage ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div
+                      className={`max-w-[80%] rounded-lg px-3 py-2 ${
+                        isMyMessage
+                          ? 'bg-blue-500/80 text-white'
+                          : 'bg-white/10 text-white'
+                      }`}
+                    >
+                      <p className="text-xs opacity-70 mb-1">{msg.playerName}</p>
+                      <p className="text-sm break-words">{msg.message}</p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          
+          {/* Поле ввода */}
+          <div className="p-3 bg-white/5 border-t border-white/20">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                placeholder="Написать сообщение..."
+                className="flex-1 px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-purple-300/50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button
+                onClick={sendMessage}
+                disabled={!chatInput.trim()}
+                className="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-500 disabled:cursor-not-allowed text-white rounded-lg transition-all text-sm font-medium"
+              >
+                ➤
+              </button>
             </div>
           </div>
         </div>
