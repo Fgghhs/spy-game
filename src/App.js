@@ -35,6 +35,7 @@ export default function SpyGame() {
 
   const [showItemGuess, setShowItemGuess] = useState(false);
   const [itemSearch, setItemSearch] = useState('');
+  const [spyLastChance, setSpyLastChance] = useState(false);
 
   // Слушаем изменения в комнате
   useEffect(() => {
@@ -85,7 +86,19 @@ export default function SpyGame() {
 
   useEffect(() => {
     if (gameData) {
-      // Обработка фазы решения
+      // ✅ ДОБАВИТЬ: Сброс состояний при новой игре
+      if (gameData.gameOver) {
+        setGameOver(true);
+        setWinner(gameData.winner);
+      } else {
+        // Новая игра началась - сбрасываем ВСЕ состояния у ВСЕХ игроков
+        setGameOver(false);
+        setWinner(null);
+        setMyVote(null);
+        setMyDecision(null);
+        setRoleRevealed(false);
+      }
+      
       if (gameData.decisionPhase) {
         setDecisionPhase(true);
         if (gameData.decisions) {
@@ -96,7 +109,6 @@ export default function SpyGame() {
         setMyDecision(null);
       }
       
-      // Обработка фазы голосования
       if (gameData.votingPhase) {
         setVotingPhase(true);
         if (gameData.votes) {
@@ -107,18 +119,13 @@ export default function SpyGame() {
         setMyVote(null);
       }
       
-      // ИСПРАВЛЕНИЕ: обрабатываем ОБА случая - и когда игра окончена, и когда рестартит
-      if (gameData.gameOver) {
-        setGameOver(true);
-        setWinner(gameData.winner);
+      if (gameData.spyLastChance) {
+        setSpyLastChance(true);
       } else {
-        // При рестарте игры сбрасываем все состояния
-        setGameOver(false);
-        setWinner(null);
-        setRoleRevealed(false); // Скрываем роль для новой игры
+        setSpyLastChance(false);
       }
     }
-  }, [gameData]);
+  }, [gameData, myRole]);
 
   // Текстовый чат
   useEffect(() => {
@@ -347,7 +354,8 @@ export default function SpyGame() {
         decisionPhase: false,
         decisions: {},
         gameOver: false,
-        winner: null
+        winner: null,
+        spyLastChance: false
       };
       
       await update(ref(database, `rooms/${roomData.roomId}`), {
@@ -374,31 +382,46 @@ export default function SpyGame() {
   const guessItem = async (selectedItem) => {
     if (!gameData || !roomData) return;
     
+    const spyId = Object.entries(gameData.roles).find(([id, role]) => role === 'spy')[0];
+    
     // Проверяем, правильно ли угадал шпион
     const isCorrect = selectedItem.id === gameData.item.id;
     
     if (isCorrect) {
       // Шпион угадал - он победил!
-      const spyId = Object.entries(gameData.roles).find(([id, role]) => role === 'spy')[0];
       await update(ref(database, `rooms/${roomData.roomId}/game`), {
         gameOver: true,
         winner: 'spy',
         spyGuessed: true,
         guessedItem: selectedItem,
-        votedOutPlayer: null, // Никого не выгоняли
-        spyId: spyId
+        votedOutPlayer: gameData.votedOutPlayer || null,
+        spyId: spyId,
+        spyLastChance: false
       });
     } else {
-      // Шпион ошибся - мирные победили!
-      const spyId = Object.entries(gameData.roles).find(([id, role]) => role === 'spy')[0];
-      await update(ref(database, `rooms/${roomData.roomId}/game`), {
-        gameOver: true,
-        winner: 'civilians',
-        spyGuessed: false,
-        guessedItem: selectedItem,
-        votedOutPlayer: spyId, // Шпион "выгнан" за неправильную догадку
-        spyId: spyId
-      });
+      // Шпион ошибся
+      if (gameData.spyLastChance) {
+        // Это был последний шанс - мирные победили
+        await update(ref(database, `rooms/${roomData.roomId}/game`), {
+          gameOver: true,
+          winner: 'civilians',
+          spyGuessed: false,
+          guessedItem: selectedItem,
+          votedOutPlayer: gameData.votedOutPlayer || spyId,
+          spyId: spyId,
+          spyLastChance: false
+        });
+      } else {
+        // Обычное угадывание во время игры - мирные победили
+        await update(ref(database, `rooms/${roomData.roomId}/game`), {
+          gameOver: true,
+          winner: 'civilians',
+          spyGuessed: false,
+          guessedItem: selectedItem,
+          votedOutPlayer: spyId,
+          spyId: spyId
+        });
+      }
     }
     
     setShowItemGuess(false);
@@ -433,10 +456,13 @@ export default function SpyGame() {
       const votedOutRole = gameData.roles[votedOutPlayer];
       
       if (votedOutRole === 'spy') {
-        // Мирные победили
-        await endGame('civilians', votedOutPlayer);
+        // Шпиону дается последний шанс угадать предмет
+        await update(ref(database, `rooms/${roomData.roomId}/game`), {
+          spyLastChance: true,
+          votedOutPlayer: votedOutPlayer
+        });
       } else {
-        // Шпион победил
+        // Выгнали мирного - шпион победил
         const spyId = Object.entries(gameData.roles).find(([id, role]) => role === 'spy')[0];
         await endGame('spy', votedOutPlayer, spyId);
       }
@@ -531,7 +557,7 @@ export default function SpyGame() {
     const turnOrder = [...playerIds].sort(() => Math.random() - 0.5);
     
     const gameState = {
-      item: getRandomItem(), // ← ИЗМЕНИЛИ ЭТО
+      item: getRandomItem(),
       roles: roles,
       turnOrder: turnOrder,
       currentTurnIndex: 0,
@@ -542,21 +568,168 @@ export default function SpyGame() {
       decisionPhase: false,
       decisions: {},
       gameOver: false,
-      winner: null
+      winner: null,
+      spyLastChance: false
     };
     
+    // Также очищаем чат при новой игре (опционально)
     await update(ref(database, `rooms/${roomData.roomId}`), {
-      game: gameState
+      game: gameState,
+      chat: null  // Очистка чата
     });
     
-    setMyVote(null);
-    setMyDecision(null);
-    setGameOver(false);
-    setWinner(null);
-    setRoleRevealed(false);
-    setDecisionPhase(false);
-    setVotingPhase(false);
+    // ❌ УДАЛИТЬ эти строки - теперь они не нужны, 
+    // useEffect сам всё сбросит:
+    // setMyVote(null);
+    // setMyDecision(null);
+    // setGameOver(false);
+    // setWinner(null);
+    // setRoleRevealed(false);
+    // setDecisionPhase(false);
+    // setVotingPhase(false);
+    // setSpyLastChance(false);
   };
+
+  if (screen === 'game' && spyLastChance && gameData && !gameOver) {
+    const isSpyTurn = myRole === 'spy';
+    const votedOutPlayer = roomData.players.find(p => p.id === gameData.votedOutPlayer);
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 flex items-center justify-center">
+        <div className="max-w-2xl w-full">
+          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 shadow-2xl text-center">
+            {isSpyTurn ? (
+              <>
+                <h1 className="text-4xl font-bold text-red-400 mb-4">
+                  ⚠️ ПОСЛЕДНИЙ ШАНС!
+                </h1>
+                <div className="bg-red-500/20 border-2 border-red-500 rounded-xl p-6 mb-6">
+                  <p className="text-white text-xl mb-4">
+                    Вас раскрыли! Но у вас есть последний шанс - угадайте предмет!
+                  </p>
+                  <p className="text-red-300 text-sm">
+                    Если угадаете правильно - вы победите. Если ошибетесь - проиграете.
+                  </p>
+                </div>
+                
+                <button
+                  onClick={() => setShowItemGuess(true)}
+                  className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-4 text-xl rounded-xl transition-all transform hover:scale-105 shadow-lg mb-4"
+                >
+                  🎯 Угадать предмет
+                </button>
+                
+                <p className="text-purple-300 text-sm">
+                  Игра ожидает вашего выбора...
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-3xl font-bold text-white mb-4">
+                  ⏳ Ожидание...
+                </h1>
+                <div className="bg-yellow-500/20 border-2 border-yellow-500 rounded-xl p-6 mb-6">
+                  <p className="text-white text-xl mb-4">
+                    Шпион раскрыт: <span className="font-bold">{votedOutPlayer?.name}</span>
+                  </p>
+                  <p className="text-yellow-300">
+                    Шпион пытается угадать предмет...
+                  </p>
+                </div>
+                
+                <div className="flex justify-center">
+                  <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-purple-500"></div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+        {myRole === 'spy' && showItemGuess && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-gradient-to-br from-slate-900 to-purple-900 rounded-2xl border border-white/20 shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+              {/* Заголовок */}
+              <div className="bg-white/10 p-6 border-b border-white/20">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-bold text-white">
+                    {spyLastChance ? '⚠️ ПОСЛЕДНИЙ ШАНС: Угадайте предмет!' : '🔍 Угадайте предмет'}
+                  </h2>
+                  {!spyLastChance && (
+                    <button
+                      onClick={() => setShowItemGuess(false)}
+                      className="text-white/70 hover:text-white text-2xl w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition-all"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                
+                {/* Поиск */}
+                <div className="mt-4">
+                  <input
+                    type="text"
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                    placeholder="Поиск предмета..."
+                    className="w-full px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-purple-300/50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                </div>
+                
+                <p className={`text-sm mt-3 font-medium ${spyLastChance ? 'text-red-400' : 'text-yellow-400'}`}>
+                  {spyLastChance 
+                    ? '🔥 Это ваш последний шанс! Если ошибетесь - проиграете!' 
+                    : '⚠️ Внимание! Если вы угадаете неправильно - мирные победят!'}
+                </p>
+              </div>
+              
+              {/* Список предметов */}
+              <div className="overflow-y-auto p-6 max-h-[calc(90vh-200px)]">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {itemList
+                    .filter(item => 
+                      item.name.toLowerCase().includes(itemSearch.toLowerCase())
+                    )
+                    .map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          if (window.confirm(`Вы уверены, что это "${item.name}"?${spyLastChance ? ' ЭТО ПОСЛЕДНИЙ ШАНС!' : ' Если ошибетесь - проиграете!'}`)) {
+                            guessItem(item);
+                          }
+                        }}
+                        className="bg-white/10 hover:bg-white/20 border-2 border-white/20 hover:border-blue-500 rounded-xl p-3 transition-all transform hover:scale-105 group"
+                      >
+                        <div className="aspect-square bg-white/10 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
+                          <img 
+                            src={`/spy-game/images/${item.name}.png`}
+                            alt={item.name}
+                            className="w-full h-full object-contain"
+                            onError={(e) => {
+                              e.target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="50" font-size="40">❓</text></svg>';
+                            }}
+                          />
+                        </div>
+                        <p className="text-white text-sm font-medium text-center group-hover:text-blue-400 transition-colors">
+                          {item.name}
+                        </p>
+                      </button>
+                    ))}
+                </div>
+                
+                {itemList.filter(item => 
+                  item.name.toLowerCase().includes(itemSearch.toLowerCase())
+                ).length === 0 && (
+                  <p className="text-center text-purple-300 py-8">
+                    Предметы не найдены
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Экран завершения игры
   if (screen === 'game' && gameOver && gameData) {
@@ -590,8 +763,12 @@ export default function SpyGame() {
                   }`}>
                     <p className="text-white font-bold mb-2">
                       {gameData.spyGuessed 
-                        ? '🎯 Шпион правильно угадал предмет!' 
-                        : '❌ Шпион ошибся с предметом!'}
+                        ? votedOutPlayer 
+                          ? '🎯 Шпион угадал предмет в последний момент!' 
+                          : '🎯 Шпион правильно угадал предмет!'
+                        : votedOutPlayer
+                          ? '❌ Шпион не смог угадать предмет!'
+                          : '❌ Шпион ошибся с предметом!'}
                     </p>
                     {gameData.guessedItem && (
                       <div className="mt-3">
@@ -609,7 +786,7 @@ export default function SpyGame() {
                   </div>
                 )}
                 
-                {votedOutPlayer && (
+                {votedOutPlayer && !gameData.spyGuessed && (
                   <div className="bg-white/5 rounded-lg p-4">
                     <p className="text-purple-200 mb-1">Выгнали:</p>
                     <p className="text-white font-bold text-xl">{votedOutPlayer.name}</p>
